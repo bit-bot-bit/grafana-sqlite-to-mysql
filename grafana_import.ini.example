@@ -1,0 +1,40 @@
+[mysql]
+host = 127.0.0.1
+port = 3306
+user = root
+password =
+target_db = grafana
+ssl_ca = /path/to/ca.pem
+ssl_cert = /path/to/cert.pem
+ssl_key = /path/to/key.pem
+ssl_disabled = false
+
+[import]
+dump_file = /path/to/grafana.sql
+commit_statements = 500
+commit_bytes = 5242880
+disable_foreign_keys = true
+disable_unique_checks = true
+sql_mode =
+autocommit = false
+force_charset = utf8mb4
+create_db = true
+recreate_db = false
+quarantine_file = quarantine_failures.sql
+quarantine_all_failures = true
+quarantine_only_inserts = false
+fail_on_error = false
+progress_mb = 50
+progress_statements = 5000
+progress_bar = false
+log_file =
+cleanup_temp = false
+ignore_locks = true
+allow_delimiter = false
+no_transforms = false
+transform_insert_or_replace = true
+parallel_per_table = false
+parallel_workers = 4
+parallel_temp_dir = /tmp/grafana-import
+dry_run = false
+dry_run_parallel = false

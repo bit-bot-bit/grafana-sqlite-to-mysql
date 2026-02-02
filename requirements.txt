@@ -1,0 +1,4 @@
+# Driver selection: mysqlclient preferred, fallback to PyMySQL.
+# Install one of these:
+# mysqlclient>=2.2.0
+# PyMySQL>=1.1.0
