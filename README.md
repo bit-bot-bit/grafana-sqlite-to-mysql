@@ -31,6 +31,18 @@ python import_grafana_dump.py --dump-file grafana.sql --target-db grafana \
   --host 127.0.0.1 --user root --password secret
 ```
 
+Diff + upsert sync (natural keys):
+```
+python sync_grafana_dump.py --dump-file grafana.sql --target-db grafana \
+  --tables dashboard,folder,data_source,alert_rule --diff-only
+```
+
+Apply sync (upsert):
+```
+python sync_grafana_dump.py --dump-file grafana.sql --target-db grafana \
+  --tables dashboard,folder,data_source,alert_rule --apply
+```
+
 Import with performance flags:
 ```
 python import_grafana_dump.py --dump-file grafana.sql --target-db grafana \
@@ -85,8 +97,12 @@ progress_bar = false
 progress_bar_logs = false
 worker_progress = false
 worker_progress_interval = 5.0
+no_auto_tune_batch = false
+resume = false
+resume_file = import.resume.json
 log_file =
 cleanup_temp = false
+no_purge_temp = false
 ignore_locks = true
 allow_delimiter = false
 no_transforms = false
@@ -96,6 +112,17 @@ parallel_workers = 4
 parallel_temp_dir = /tmp/grafana-import
 dry_run = false
 dry_run_parallel = false
+```
+
+Example sync section (optional):
+```
+[sync]
+dump_file = /path/to/grafana.sql
+target_db = grafana
+stage_db = __grafana_sync_stage
+tables = dashboard,dashboard_version,dashboard_acl,folder,data_source,alert_rule
+diff_only = true
+apply = false
 ```
 
 Environment overrides
@@ -112,6 +139,16 @@ to write logs to a file while also printing to stdout.
 Use `--progress-bar-logs` to keep periodic progress log lines even when the
 progress bar is enabled.
 
+Auto-tuned batch sizes
+----------------------
+By default, large dumps (or large per-table files in parallel mode) will auto-tune
+`commit_statements` and `commit_bytes` upward. Use `--no-auto-tune-batch` to disable.
+
+Resume mode
+-----------
+Use `--resume` to write and reuse a checkpoint file (`--resume-file`) so the import
+can continue after interruption. In parallel mode, completed tables are skipped on resume.
+
 Worker progress table (parallel mode)
 -------------------------------------
 Use `--worker-progress` to print a periodic table of worker progress while
@@ -122,6 +159,7 @@ This view redraws in-place using ANSI escape codes.
 Cleanup temp files
 ------------------
 Use `--cleanup-temp` to remove per-table temp files after a successful run.
+By default, temp files are purged before staging. Use `--no-purge-temp` to keep them.
 
 Parallel per-table mode
 -----------------------

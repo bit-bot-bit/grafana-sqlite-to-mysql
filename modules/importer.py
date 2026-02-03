@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import os
 import queue
@@ -217,6 +218,7 @@ def _parallel_worker(
     worker_lock: threading.Lock,
     completed_tables: list[tuple[str, int, int, int]],
     completed_lock: threading.Lock,
+    resume_path: Optional[str],
 ) -> None:
     # This code here is a worker that eats one table file at a time.
     conn = build_connection(opts)
@@ -229,6 +231,22 @@ def _parallel_worker(
                 break
             table_name, file_path = item
             logging.info("Worker %d processing table %s", worker_id, table_name)
+            commit_statements = opts.commit_statements
+            commit_bytes = opts.commit_bytes
+            if opts.auto_tune_batch:
+                try:
+                    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    if size_mb >= 1024:
+                        commit_statements = max(commit_statements, 10000)
+                        commit_bytes = max(commit_bytes, 100 * 1024 * 1024)
+                    elif size_mb >= 200:
+                        commit_statements = max(commit_statements, 5000)
+                        commit_bytes = max(commit_bytes, 50 * 1024 * 1024)
+                    elif size_mb >= 50:
+                        commit_statements = max(commit_statements, 2000)
+                        commit_bytes = max(commit_bytes, 20 * 1024 * 1024)
+                except Exception:
+                    pass
             batch: list[tuple[str, int, int]] = []
             batch_bytes = 0
             table_ok = 0
@@ -248,7 +266,7 @@ def _parallel_worker(
                         )
                         batch.append((stmt_text, src_start, src_end))
                         batch_bytes += len(statement.encode("utf-8"))
-                        if len(batch) >= opts.commit_statements or batch_bytes >= opts.commit_bytes:
+                        if len(batch) >= commit_statements or batch_bytes >= commit_bytes:
                             ok, failed = process_batch(
                                 conn,
                                 batch,
@@ -297,6 +315,14 @@ def _parallel_worker(
                 )
                 with completed_lock:
                     completed_tables.append((table_name, processed, total, table_failed))
+                    if resume_path:
+                        _write_resume_file(
+                            resume_path,
+                            {
+                                "mode": "parallel",
+                                "completed_tables": [t[0] for t in completed_tables],
+                            },
+                        )
             finally:
                 with worker_lock:
                     worker_status[worker_id] = {
@@ -333,6 +359,24 @@ def _render_worker_table(
     return "\n".join(lines) + "\n"
 
 
+def _write_resume_file(path: str, data: dict) -> None:
+    # This code here writes a small checkpoint so we can resume safely.
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fp:
+        json.dump(data, fp)
+    os.replace(tmp_path, path)
+
+
+def _read_resume_file(path: str) -> Optional[dict]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return None
+
+
 def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
     # This code here stages INSERTs per table, then runs them in parallel.
     stats = ImportStats(start_time=time.time())
@@ -344,18 +388,31 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
     batch_bytes = 0
     last_mb_reported = -1
     last_stmt_reported = 0
-    table_files: dict[str, str] = {}
-    table_fps: dict[str, object] = {}
-    table_counts: dict[str, int] = {}
-    table_bytes: dict[str, int] = {}
+                table_files: dict[str, str] = {}
+                table_fps: dict[str, object] = {}
+                table_counts: dict[str, int] = {}
+                table_bytes: dict[str, int] = {}
     stats_lock = threading.Lock()
     quarantine_lock = threading.Lock()
     worker_lock = threading.Lock()
     completed_lock = threading.Lock()
     worker_status: dict[int, dict] = {}
     completed_tables: list[tuple[str, int, int, int]] = []
+    completed_names: set[str] = set()
 
     os.makedirs(opts.parallel_temp_dir, exist_ok=True)
+    resume_path = opts.resume_file if opts.resume else None
+    if resume_path:
+        resume_data = _read_resume_file(resume_path)
+        if resume_data and resume_data.get("mode") == "parallel":
+            completed_names = set(resume_data.get("completed_tables", []))
+    if opts.purge_temp:
+        for name in os.listdir(opts.parallel_temp_dir):
+            if name.endswith(".sql"):
+                try:
+                    os.remove(os.path.join(opts.parallel_temp_dir, name))
+                except Exception:
+                    logging.warning("Failed to remove temp file %s", name)
 
     progress = ProgressBar(opts.progress_bar, os.path.getsize(opts.dump_file))
     try:
@@ -429,6 +486,12 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                 size_mb = table_bytes.get(name, 0) / (1024 * 1024)
                 logging.info("  table=%s statements=%d size=%.2fMB", name, count, size_mb)
 
+        if completed_names:
+            with completed_lock:
+                for name in completed_names:
+                    total = table_counts.get(name, 0)
+                    completed_tables.append((name, total, total, 0))
+
         table_queue: queue.Queue = queue.Queue()
         workers: list[threading.Thread] = []
         for i in range(opts.parallel_workers):
@@ -447,6 +510,7 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                     worker_lock,
                     completed_tables,
                     completed_lock,
+                    resume_path,
                 ),
                 daemon=True,
             )
@@ -483,6 +547,9 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
             progress_thread.start()
 
         for table_name, path in table_files.items():
+            if table_name in completed_names:
+                logging.info("Skipping completed table %s (resume)", table_name)
+                continue
             table_queue.put((table_name, path))
         for _ in workers:
             table_queue.put(None)
@@ -537,6 +604,13 @@ def import_dump(opts: ImportOptions) -> ImportStats:
         progress = ProgressBar(opts.progress_bar, os.path.getsize(opts.dump_file))
         if opts.dry_run_parallel:
             os.makedirs(opts.parallel_temp_dir, exist_ok=True)
+            if opts.purge_temp:
+                for name in os.listdir(opts.parallel_temp_dir):
+                    if name.endswith(".sql"):
+                        try:
+                            os.remove(os.path.join(opts.parallel_temp_dir, name))
+                        except Exception:
+                            logging.warning("Failed to remove temp file %s", name)
             table_files: dict[str, str] = {}
             table_fps: dict[str, object] = {}
             table_counts: dict[str, int] = {}
@@ -619,7 +693,33 @@ def import_dump(opts: ImportOptions) -> ImportStats:
     original_uniq = None
     batch: list[tuple[str, int, int]] = []
 
+    commit_statements = opts.commit_statements
+    commit_bytes = opts.commit_bytes
+    if opts.auto_tune_batch:
+        try:
+            size_mb = os.path.getsize(opts.dump_file) / (1024 * 1024)
+            if size_mb >= 1024:
+                commit_statements = max(commit_statements, 10000)
+                commit_bytes = max(commit_bytes, 100 * 1024 * 1024)
+            elif size_mb >= 200:
+                commit_statements = max(commit_statements, 5000)
+                commit_bytes = max(commit_bytes, 50 * 1024 * 1024)
+            elif size_mb >= 50:
+                commit_statements = max(commit_statements, 2000)
+                commit_bytes = max(commit_bytes, 20 * 1024 * 1024)
+        except Exception:
+            pass
+
     progress = ProgressBar(opts.progress_bar, os.path.getsize(opts.dump_file))
+    resume_data = None
+    if opts.resume:
+        resume_data = _read_resume_file(opts.resume_file)
+        if resume_data and resume_data.get("mode") == "linear":
+            offset = int(resume_data.get("offset", 0))
+            if offset > 0:
+                logging.info("Resuming from byte offset %d", offset)
+    file_offset = 0
+    last_stmt_offset = 0
     try:
         ensure_database(conn, opts)
         original_fk, original_uniq = apply_session_toggles(conn, opts)
@@ -630,9 +730,16 @@ def import_dump(opts: ImportOptions) -> ImportStats:
         last_stmt_reported = 0
 
         with open(opts.dump_file, "r", encoding="utf-8", errors="replace") as fp:
+            if opts.resume and resume_data and resume_data.get("mode") == "linear":
+                offset = int(resume_data.get("offset", 0))
+                if offset > 0:
+                    fp.seek(offset)
             def line_reader() -> Iterable[str]:
+                nonlocal file_offset, last_stmt_offset
                 for line in fp:
                     stats.bytes_read += len(line.encode("utf-8"))
+                    file_offset = fp.tell()
+                    last_stmt_offset = file_offset
                     progress.update(stats)
                     yield line
 
@@ -660,15 +767,25 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                 batch_bytes += len(transformed.encode("utf-8"))
 
                 if opts.autocommit or (
-                    len(batch) >= opts.commit_statements
-                    or batch_bytes >= opts.commit_bytes
+                    len(batch) >= commit_statements
+                    or batch_bytes >= commit_bytes
                 ):
                     process_batch(conn, batch, stats, opts, quarantine_fp)
+                    if opts.resume:
+                        _write_resume_file(
+                            opts.resume_file,
+                            {"mode": "linear", "offset": last_stmt_offset},
+                        )
                     batch = []
                     batch_bytes = 0
 
         if batch:
             process_batch(conn, batch, stats, opts, quarantine_fp)
+            if opts.resume:
+                _write_resume_file(
+                    opts.resume_file,
+                    {"mode": "linear", "offset": last_stmt_offset},
+                )
 
         restore_session_toggles(conn, original_fk, original_uniq)
 

@@ -122,6 +122,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Seconds between worker progress table updates",
     )
     parser.add_argument(
+        "--no-auto-tune-batch",
+        action="store_true",
+        help="Disable auto-tuning commit batch sizes for large tables",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from a checkpoint file if present",
+    )
+    parser.add_argument(
+        "--resume-file",
+        default="import.resume.json",
+        help="Checkpoint file for resume mode",
+    )
+    parser.add_argument(
         "--log-file",
         default=None,
         help="Write logs to a file in addition to stdout",
@@ -130,6 +145,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--cleanup-temp",
         action="store_true",
         help="Remove per-table temp files after success",
+    )
+    parser.add_argument(
+        "--no-purge-temp",
+        action="store_true",
+        help="Do not purge temp dir before staging (default is to purge)",
     )
     parser.add_argument(
         "--ignore-locks",
@@ -242,8 +262,12 @@ def load_config(path: str) -> dict:
         "progress_bar_logs",
         "worker_progress",
         "worker_progress_interval",
+        "no_auto_tune_batch",
+        "resume",
+        "resume_file",
         "log_file",
         "cleanup_temp",
+        "no_purge_temp",
         "ignore_locks",
         "allow_delimiter",
         "no_transforms",
@@ -286,6 +310,9 @@ def load_config(path: str) -> dict:
         "dry_run",
         "dry_run_parallel",
         "cleanup_temp",
+        "no_purge_temp",
+        "no_auto_tune_batch",
+        "resume",
         "ssl_disabled",
     ):
         if key in config:
@@ -371,6 +398,9 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         worker_progress=args.worker_progress,
         worker_progress_interval=args.worker_progress_interval,
         log_file=args.log_file,
+        auto_tune_batch=not args.no_auto_tune_batch,
+        resume=args.resume,
+        resume_file=args.resume_file,
         ignore_locks=args.ignore_locks,
         allow_delimiter=args.allow_delimiter,
         no_transforms=args.no_transforms,
@@ -381,6 +411,7 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         dry_run=args.dry_run,
         dry_run_parallel=args.dry_run_parallel,
         cleanup_temp=args.cleanup_temp,
+        purge_temp=not args.no_purge_temp,
         ssl_ca=args.ssl_ca,
         ssl_cert=args.ssl_cert,
         ssl_key=args.ssl_key,
