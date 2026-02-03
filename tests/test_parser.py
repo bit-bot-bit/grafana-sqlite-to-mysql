@@ -29,6 +29,8 @@ def _opts(**overrides):
         progress_statements=5000,
         progress_bar=False,
         progress_bar_logs=False,
+        worker_progress=False,
+        worker_progress_interval=5.0,
         log_file=None,
         cleanup_temp=False,
         ignore_locks=False,

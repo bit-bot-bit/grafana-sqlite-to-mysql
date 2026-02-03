@@ -111,6 +111,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Keep periodic progress log lines even with progress bar",
     )
     parser.add_argument(
+        "--worker-progress",
+        action="store_true",
+        help="Show per-worker table progress logs in parallel mode",
+    )
+    parser.add_argument(
+        "--worker-progress-interval",
+        type=float,
+        default=5.0,
+        help="Seconds between worker progress table updates",
+    )
+    parser.add_argument(
         "--log-file",
         default=None,
         help="Write logs to a file in addition to stdout",
@@ -229,6 +240,8 @@ def load_config(path: str) -> dict:
         "progress_statements",
         "progress_bar",
         "progress_bar_logs",
+        "worker_progress",
+        "worker_progress_interval",
         "log_file",
         "cleanup_temp",
         "ignore_locks",
@@ -355,6 +368,8 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         progress_statements=args.progress_statements,
         progress_bar=args.progress_bar,
         progress_bar_logs=args.progress_bar_logs,
+        worker_progress=args.worker_progress,
+        worker_progress_interval=args.worker_progress_interval,
         log_file=args.log_file,
         ignore_locks=args.ignore_locks,
         allow_delimiter=args.allow_delimiter,
