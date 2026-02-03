@@ -257,6 +257,7 @@ def _parallel_worker(
                     "processed": 0,
                     "total": table_totals.get(table_name, 0),
                     "failed": 0,
+                    "start_time": time.monotonic(),
                 }
             try:
                 with open(file_path, "r", encoding="utf-8", errors="replace") as fp:
@@ -349,8 +350,17 @@ def _render_worker_table(
         processed = st.get("processed") or 0
         failed = st.get("failed") or 0
         pct = (processed / total * 100.0) if total else 0.0
+        start_time = st.get("start_time")
+        eta_str = "-"
+        if start_time and processed > 0:
+            elapsed = max(time.monotonic() - start_time, 0.001)
+            rate = processed / elapsed
+            remaining = max(total - processed, 0)
+            eta = remaining / rate if rate > 0 else 0
+            eta_str = f"{eta:5.1f}s"
         lines.append(
-            f"  #{wid} table={table} {pct:6.2f}% ({processed}/{total}) failures={failed}"
+            f"  #{wid} table={table} {pct:6.2f}% ({processed}/{total}) "
+            f"failures={failed} ETA {eta_str}"
         )
     completed_count = len(completed_tables)
     lines.append(f"Completed Tables: {completed_count}/{total_tables}")
