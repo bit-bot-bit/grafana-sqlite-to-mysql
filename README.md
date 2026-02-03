@@ -83,6 +83,8 @@ progress_mb = 50
 progress_statements = 5000
 progress_bar = false
 progress_bar_logs = false
+worker_progress = false
+worker_progress_interval = 5.0
 log_file =
 cleanup_temp = false
 ignore_locks = true
@@ -109,6 +111,13 @@ Use `--progress-bar` for a live single-line progress display. Use `--log-file`
 to write logs to a file while also printing to stdout.
 Use `--progress-bar-logs` to keep periodic progress log lines even when the
 progress bar is enabled.
+
+Worker progress table (parallel mode)
+-------------------------------------
+Use `--worker-progress` to print a periodic table of worker progress while
+running `--parallel-per-table`. Use `--worker-progress-interval` to control the
+refresh rate in seconds.
+This view redraws in-place using ANSI escape codes.
 
 Cleanup temp files
 ------------------

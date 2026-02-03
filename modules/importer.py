@@ -213,6 +213,8 @@ def _parallel_worker(
     quarantine_fp,
     quarantine_lock: threading.Lock,
     table_totals: dict[str, int],
+    worker_status: dict[int, dict],
+    worker_lock: threading.Lock,
 ) -> None:
     # This code here is a worker that eats one table file at a time.
     conn = build_connection(opts)
@@ -229,6 +231,13 @@ def _parallel_worker(
             batch_bytes = 0
             table_ok = 0
             table_failed = 0
+            with worker_lock:
+                worker_status[worker_id] = {
+                    "table": table_name,
+                    "processed": 0,
+                    "total": table_totals.get(table_name, 0),
+                    "failed": 0,
+                }
             try:
                 with open(file_path, "r", encoding="utf-8", errors="replace") as fp:
                     for statement, start_line, end_line in statement_splitter(fp):
@@ -249,6 +258,11 @@ def _parallel_worker(
                             )
                             table_ok += ok
                             table_failed += failed
+                            with worker_lock:
+                                status = worker_status.get(worker_id, {})
+                                status["processed"] = table_ok + table_failed
+                                status["failed"] = table_failed
+                                worker_status[worker_id] = status
                             batch = []
                             batch_bytes = 0
                     if batch:
@@ -263,6 +277,11 @@ def _parallel_worker(
                         )
                         table_ok += ok
                         table_failed += failed
+                        with worker_lock:
+                            status = worker_status.get(worker_id, {})
+                            status["processed"] = table_ok + table_failed
+                            status["failed"] = table_failed
+                            worker_status[worker_id] = status
                 total = table_totals.get(table_name, table_ok + table_failed)
                 processed = table_ok + table_failed
                 pct = (processed / total * 100.0) if total else 100.0
@@ -275,9 +294,31 @@ def _parallel_worker(
                     table_failed,
                 )
             finally:
+                with worker_lock:
+                    worker_status[worker_id] = {
+                        "table": None,
+                        "processed": 0,
+                        "total": 0,
+                        "failed": 0,
+                    }
                 table_queue.task_done()
     finally:
         conn.close()
+
+
+def _render_worker_table(worker_status: dict[int, dict]) -> str:
+    lines = ["Worker Progress:"]
+    for wid in sorted(worker_status.keys()):
+        st = worker_status.get(wid, {})
+        table = st.get("table") or "-"
+        total = st.get("total") or 0
+        processed = st.get("processed") or 0
+        failed = st.get("failed") or 0
+        pct = (processed / total * 100.0) if total else 0.0
+        lines.append(
+            f"  #{wid} table={table} {pct:6.2f}% ({processed}/{total}) failures={failed}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
@@ -297,6 +338,8 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
     table_bytes: dict[str, int] = {}
     stats_lock = threading.Lock()
     quarantine_lock = threading.Lock()
+    worker_lock = threading.Lock()
+    worker_status: dict[int, dict] = {}
 
     os.makedirs(opts.parallel_temp_dir, exist_ok=True)
 
@@ -386,11 +429,37 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                     quarantine_fp,
                     quarantine_lock,
                     table_counts,
+                    worker_status,
+                    worker_lock,
                 ),
                 daemon=True,
             )
             thread.start()
             workers.append(thread)
+
+        if opts.worker_progress:
+            logging.info("Workers: %d (progress updates every %.1fs)", opts.parallel_workers, opts.worker_progress_interval)
+            with worker_lock:
+                for i in range(1, opts.parallel_workers + 1):
+                    worker_status.setdefault(i, {"table": None, "processed": 0, "total": 0, "failed": 0})
+
+        def progress_table():
+            while True:
+                time.sleep(opts.worker_progress_interval)
+                if not opts.worker_progress:
+                    continue
+                if table_queue.unfinished_tasks == 0:
+                    break
+                with worker_lock:
+                    table_text = _render_worker_table(worker_status)
+                sys.stderr.write("\033[H\033[J")
+                sys.stderr.write(table_text)
+                sys.stderr.flush()
+
+        progress_thread = None
+        if opts.worker_progress:
+            progress_thread = threading.Thread(target=progress_table, daemon=True)
+            progress_thread.start()
 
         for table_name, path in table_files.items():
             table_queue.put((table_name, path))
@@ -398,6 +467,8 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
             table_queue.put(None)
 
         table_queue.join()
+        if progress_thread:
+            progress_thread.join()
         for thread in workers:
             thread.join()
 

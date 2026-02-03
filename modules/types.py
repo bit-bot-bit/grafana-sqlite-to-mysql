@@ -41,6 +41,8 @@ class ImportOptions:
     progress_bar: bool
     log_file: Optional[str]
     progress_bar_logs: bool
+    worker_progress: bool
+    worker_progress_interval: float
     ignore_locks: bool
     allow_delimiter: bool
     no_transforms: bool
