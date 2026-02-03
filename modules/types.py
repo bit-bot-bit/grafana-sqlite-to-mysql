@@ -40,6 +40,7 @@ class ImportOptions:
     progress_statements: int
     progress_bar: bool
     log_file: Optional[str]
+    progress_bar_logs: bool
     ignore_locks: bool
     allow_delimiter: bool
     no_transforms: bool

@@ -106,6 +106,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Show a live progress bar in the terminal",
     )
     parser.add_argument(
+        "--progress-bar-logs",
+        action="store_true",
+        help="Keep periodic progress log lines even with progress bar",
+    )
+    parser.add_argument(
         "--log-file",
         default=None,
         help="Write logs to a file in addition to stdout",
@@ -223,6 +228,7 @@ def load_config(path: str) -> dict:
         "progress_mb",
         "progress_statements",
         "progress_bar",
+        "progress_bar_logs",
         "log_file",
         "cleanup_temp",
         "ignore_locks",
@@ -348,6 +354,7 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         progress_mb=args.progress_mb,
         progress_statements=args.progress_statements,
         progress_bar=args.progress_bar,
+        progress_bar_logs=args.progress_bar_logs,
         log_file=args.log_file,
         ignore_locks=args.ignore_locks,
         allow_delimiter=args.allow_delimiter,

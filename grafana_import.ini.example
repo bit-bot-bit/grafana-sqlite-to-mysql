@@ -27,6 +27,7 @@ fail_on_error = false
 progress_mb = 50
 progress_statements = 5000
 progress_bar = false
+progress_bar_logs = false
 log_file =
 cleanup_temp = false
 ignore_locks = true

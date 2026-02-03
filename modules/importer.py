@@ -9,7 +9,13 @@ import threading
 import time
 from typing import Iterable, Optional
 
-from .db import apply_session_toggles, build_connection, ensure_database, restore_session_toggles
+from .db import (
+    apply_session_toggles,
+    build_connection,
+    ensure_database,
+    restore_session_toggles,
+    select_database,
+)
 from .parser import (
     extract_insert_table,
     is_insert_or_replace_or_update,
@@ -44,6 +50,7 @@ class ProgressBar:
         self.total_bytes = total_bytes
         self.last_update = 0.0
         self.start_time = time.monotonic()
+        self.width = 28
 
     def update(self, stats: ImportStats) -> None:
         if not self.enabled:
@@ -54,12 +61,14 @@ class ProgressBar:
         self.last_update = now
         if self.total_bytes and self.total_bytes > 0:
             pct = min(stats.bytes_read / self.total_bytes, 1.0) * 100.0
+            filled = int(self.width * (pct / 100.0))
+            bar = "█" * filled + "░" * (self.width - filled)
             elapsed = max(time.monotonic() - self.start_time, 0.001)
             bytes_per_sec = stats.bytes_read / elapsed
             eta = (self.total_bytes - stats.bytes_read) / bytes_per_sec if bytes_per_sec > 0 else 0
             stmts_per_sec = stats.statements_total / elapsed
             msg = (
-                f"\r{pct:6.2f}% "
+                f"\r[{bar}] {pct:6.2f}% "
                 f"{stats.bytes_read/1024/1024:8.2f}MB/"
                 f"{self.total_bytes/1024/1024:8.2f}MB "
                 f"stmts={stats.statements_total} ok={stats.statements_ok} "
@@ -68,7 +77,8 @@ class ProgressBar:
             )
         else:
             msg = (
-                f"\r{stats.bytes_read/1024/1024:8.2f}MB "
+                f"\r[{'█' * (self.width // 3)}{'░' * (self.width - self.width // 3)}] "
+                f"{stats.bytes_read/1024/1024:8.2f}MB "
                 f"stmts={stats.statements_total} ok={stats.statements_ok} fail={stats.statements_failed}"
             )
         sys.stderr.write(msg)
@@ -206,6 +216,7 @@ def _parallel_worker(
 ) -> None:
     # This code here is a worker that eats one table file at a time.
     conn = build_connection(opts)
+    select_database(conn, opts.target_db)
     try:
         while True:
             item = table_queue.get()
@@ -304,18 +315,19 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
 
             for statement, start_line, end_line in statement_splitter(line_reader()):
                 stats.statements_total += 1
-                if (
-                    opts.progress_statements > 0
-                    and stats.statements_total - last_stmt_reported
-                    >= opts.progress_statements
-                ):
-                    last_stmt_reported = stats.statements_total
-                    log_progress(stats)
-                if opts.progress_mb > 0:
-                    mb_read = int(stats.bytes_read / (1024 * 1024))
-                    if mb_read != last_mb_reported and mb_read % opts.progress_mb == 0:
-                        last_mb_reported = mb_read
+                if not opts.progress_bar or opts.progress_bar_logs:
+                    if (
+                        opts.progress_statements > 0
+                        and stats.statements_total - last_stmt_reported
+                        >= opts.progress_statements
+                    ):
+                        last_stmt_reported = stats.statements_total
                         log_progress(stats)
+                    if opts.progress_mb > 0:
+                        mb_read = int(stats.bytes_read / (1024 * 1024))
+                        if mb_read != last_mb_reported and mb_read % opts.progress_mb == 0:
+                            last_mb_reported = mb_read
+                            log_progress(stats)
 
                 transformed = maybe_transform_statement(statement, opts)
                 if transformed is None:
@@ -475,18 +487,19 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                         if not transformed.endswith(";"):
                             fp_out.write(";")
                         fp_out.write("\n")
-                if (
-                    opts.progress_statements > 0
-                    and stats.statements_total - last_stmt_reported
-                    >= opts.progress_statements
-                ):
-                    last_stmt_reported = stats.statements_total
-                    log_progress(stats)
-                if opts.progress_mb > 0:
-                    mb_read = int(stats.bytes_read / (1024 * 1024))
-                    if mb_read != last_mb_reported and mb_read % opts.progress_mb == 0:
-                        last_mb_reported = mb_read
+                if not opts.progress_bar or opts.progress_bar_logs:
+                    if (
+                        opts.progress_statements > 0
+                        and stats.statements_total - last_stmt_reported
+                        >= opts.progress_statements
+                    ):
+                        last_stmt_reported = stats.statements_total
                         log_progress(stats)
+                    if opts.progress_mb > 0:
+                        mb_read = int(stats.bytes_read / (1024 * 1024))
+                        if mb_read != last_mb_reported and mb_read % opts.progress_mb == 0:
+                            last_mb_reported = mb_read
+                            log_progress(stats)
         for fp_out in table_fps.values():
             fp_out.close()
         if opts.dry_run_parallel and table_counts:
@@ -533,18 +546,19 @@ def import_dump(opts: ImportOptions) -> ImportStats:
 
             for statement, start_line, end_line in statement_splitter(line_reader()):
                 stats.statements_total += 1
-                if (
-                    opts.progress_statements > 0
-                    and stats.statements_total - last_stmt_reported
-                    >= opts.progress_statements
-                ):
-                    last_stmt_reported = stats.statements_total
-                    log_progress(stats)
-                if opts.progress_mb > 0:
-                    mb_read = int(stats.bytes_read / (1024 * 1024))
-                    if mb_read != last_mb_reported and mb_read % opts.progress_mb == 0:
-                        last_mb_reported = mb_read
+                if not opts.progress_bar or opts.progress_bar_logs:
+                    if (
+                        opts.progress_statements > 0
+                        and stats.statements_total - last_stmt_reported
+                        >= opts.progress_statements
+                    ):
+                        last_stmt_reported = stats.statements_total
                         log_progress(stats)
+                    if opts.progress_mb > 0:
+                        mb_read = int(stats.bytes_read / (1024 * 1024))
+                        if mb_read != last_mb_reported and mb_read % opts.progress_mb == 0:
+                            last_mb_reported = mb_read
+                            log_progress(stats)
 
                 transformed = maybe_transform_statement(statement, opts)
                 if transformed is None:

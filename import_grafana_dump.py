@@ -36,6 +36,28 @@ def main(argv: list[str]) -> int:
     try:
         opts = parse_args(argv)
         add_log_file(opts.log_file)
+        logging.info(
+            "Mode: %s",
+            "DRY RUN (no DB connection)" if opts.dry_run else "LIVE IMPORT",
+        )
+        logging.info(
+            "Settings: dump=%s target_db=%s host=%s port=%s user=%s ssl=%s",
+            opts.dump_file,
+            opts.target_db,
+            opts.host,
+            opts.port,
+            opts.user,
+            "disabled" if opts.ssl_disabled else ("on" if opts.ssl_ca else "default"),
+        )
+        logging.info(
+            "Settings: commit_statements=%d commit_bytes=%d autocommit=%s parallel=%s workers=%d dry_run_parallel=%s",
+            opts.commit_statements,
+            opts.commit_bytes,
+            opts.autocommit,
+            opts.parallel_per_table,
+            opts.parallel_workers,
+            opts.dry_run_parallel,
+        )
         stats = import_dump(opts)
         logging.info(format_summary(stats, opts))
         if opts.fail_on_error and stats.statements_failed > 0:

@@ -82,6 +82,7 @@ fail_on_error = false
 progress_mb = 50
 progress_statements = 5000
 progress_bar = false
+progress_bar_logs = false
 log_file =
 cleanup_temp = false
 ignore_locks = true
@@ -106,6 +107,8 @@ Progress bar and log file
 -------------------------
 Use `--progress-bar` for a live single-line progress display. Use `--log-file`
 to write logs to a file while also printing to stdout.
+Use `--progress-bar-logs` to keep periodic progress log lines even when the
+progress bar is enabled.
 
 Cleanup temp files
 ------------------
