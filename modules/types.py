@@ -43,6 +43,9 @@ class ImportOptions:
     progress_bar_logs: bool
     worker_progress: bool
     worker_progress_interval: float
+    auto_tune_batch: bool
+    resume: bool
+    resume_file: str
     ignore_locks: bool
     allow_delimiter: bool
     no_transforms: bool
@@ -53,6 +56,7 @@ class ImportOptions:
     dry_run: bool
     dry_run_parallel: bool
     cleanup_temp: bool
+    purge_temp: bool
     ssl_ca: Optional[str]
     ssl_cert: Optional[str]
     ssl_key: Optional[str]

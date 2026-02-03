@@ -30,8 +30,12 @@ progress_bar = false
 progress_bar_logs = false
 worker_progress = false
 worker_progress_interval = 5.0
+no_auto_tune_batch = false
+resume = false
+resume_file = import.resume.json
 log_file =
 cleanup_temp = false
+no_purge_temp = false
 ignore_locks = true
 allow_delimiter = false
 no_transforms = false
@@ -41,3 +45,11 @@ parallel_workers = 4
 parallel_temp_dir = /tmp/grafana-import
 dry_run = false
 dry_run_parallel = false
+
+[sync]
+dump_file = /path/to/grafana.sql
+target_db = grafana
+stage_db = __grafana_sync_stage
+tables = dashboard,dashboard_version,dashboard_acl,folder,data_source,alert_rule
+diff_only = true
+apply = false
