@@ -28,6 +28,7 @@ def _opts(**overrides):
         progress_mb=50,
         progress_statements=5000,
         progress_bar=False,
+        progress_bar_logs=False,
         log_file=None,
         cleanup_temp=False,
         ignore_locks=False,

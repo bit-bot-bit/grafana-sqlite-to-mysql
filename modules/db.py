@@ -99,6 +99,15 @@ def ensure_database(conn, opts: ImportOptions) -> None:
         cursor.close()
 
 
+def select_database(conn, db_name: str) -> None:
+    # This code here switches to the target DB without creating anything.
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"USE `{db_name}`")
+    finally:
+        cursor.close()
+
+
 def apply_session_toggles(conn, opts: ImportOptions) -> tuple[Optional[int], Optional[int]]:
     # This code here flips session flags (FK/unique/sql_mode) and returns originals.
     cursor = conn.cursor()
