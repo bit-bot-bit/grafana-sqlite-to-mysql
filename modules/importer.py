@@ -388,10 +388,10 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
     batch_bytes = 0
     last_mb_reported = -1
     last_stmt_reported = 0
-                table_files: dict[str, str] = {}
-                table_fps: dict[str, object] = {}
-                table_counts: dict[str, int] = {}
-                table_bytes: dict[str, int] = {}
+    table_files: dict[str, str] = {}
+    table_fps: dict[str, object] = {}
+    table_counts: dict[str, int] = {}
+    table_bytes: dict[str, int] = {}
     stats_lock = threading.Lock()
     quarantine_lock = threading.Lock()
     worker_lock = threading.Lock()
