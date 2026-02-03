@@ -380,7 +380,7 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                 if table_name:
                     path = table_files.get(table_name)
                     if not path:
-                        safe_name = table_name.replace("/", "_")
+                        safe_name = table_name.replace("/", "_").replace(".", "__")
                         path = os.path.join(opts.parallel_temp_dir, f"{safe_name}.sql")
                         table_files[table_name] = path
                         table_fps[table_name] = open(

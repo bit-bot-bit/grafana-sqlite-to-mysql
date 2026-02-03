@@ -105,7 +105,7 @@ class TransformTests(unittest.TestCase):
         )
         self.assertEqual(
             extract_insert_table("INSERT INTO db1.baz VALUES (1);"),
-            "baz",
+            "db1.baz",
         )
 
 

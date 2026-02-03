@@ -69,7 +69,10 @@ def extract_insert_table(statement: str) -> Optional[str]:
     match = _INSERT_TABLE_RE.match(s)
     if not match:
         return None
+    schema = match.group(2)
     table = match.group(3) or match.group(2)
+    if match.group(3) and schema:
+        return f"{schema}.{table}"
     return table
 
 
