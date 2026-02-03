@@ -215,6 +215,8 @@ def _parallel_worker(
     table_totals: dict[str, int],
     worker_status: dict[int, dict],
     worker_lock: threading.Lock,
+    completed_tables: list[tuple[str, int, int, int]],
+    completed_lock: threading.Lock,
 ) -> None:
     # This code here is a worker that eats one table file at a time.
     conn = build_connection(opts)
@@ -293,6 +295,8 @@ def _parallel_worker(
                     total,
                     table_failed,
                 )
+                with completed_lock:
+                    completed_tables.append((table_name, processed, total, table_failed))
             finally:
                 with worker_lock:
                     worker_status[worker_id] = {
@@ -306,7 +310,11 @@ def _parallel_worker(
         conn.close()
 
 
-def _render_worker_table(worker_status: dict[int, dict]) -> str:
+def _render_worker_table(
+    worker_status: dict[int, dict],
+    completed_tables: list[tuple[str, int, int, int]],
+    total_tables: int,
+) -> str:
     lines = ["Worker Progress:"]
     for wid in sorted(worker_status.keys()):
         st = worker_status.get(wid, {})
@@ -318,6 +326,10 @@ def _render_worker_table(worker_status: dict[int, dict]) -> str:
         lines.append(
             f"  #{wid} table={table} {pct:6.2f}% ({processed}/{total}) failures={failed}"
         )
+    completed_count = len(completed_tables)
+    lines.append(f"Completed Tables: {completed_count}/{total_tables}")
+    for name, processed, total, failed in completed_tables[-5:]:
+        lines.append(f"  {name} 100.00% ({processed}/{total}) failures={failed}")
     return "\n".join(lines) + "\n"
 
 
@@ -339,7 +351,9 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
     stats_lock = threading.Lock()
     quarantine_lock = threading.Lock()
     worker_lock = threading.Lock()
+    completed_lock = threading.Lock()
     worker_status: dict[int, dict] = {}
+    completed_tables: list[tuple[str, int, int, int]] = []
 
     os.makedirs(opts.parallel_temp_dir, exist_ok=True)
 
@@ -384,7 +398,7 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                         path = os.path.join(opts.parallel_temp_dir, f"{safe_name}.sql")
                         table_files[table_name] = path
                         table_fps[table_name] = open(
-                            path, "a", encoding="utf-8"
+                            path, "w", encoding="utf-8"
                         )
                     fp_out = table_fps[table_name]
                     table_counts[table_name] = table_counts.get(table_name, 0) + 1
@@ -431,6 +445,8 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                     table_counts,
                     worker_status,
                     worker_lock,
+                    completed_tables,
+                    completed_lock,
                 ),
                 daemon=True,
             )
@@ -451,7 +467,12 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                 if table_queue.unfinished_tasks == 0:
                     break
                 with worker_lock:
-                    table_text = _render_worker_table(worker_status)
+                    with completed_lock:
+                        table_text = _render_worker_table(
+                            worker_status,
+                            list(completed_tables),
+                            total_tables=len(table_files),
+                        )
                 sys.stderr.write("\033[H\033[J")
                 sys.stderr.write(table_text)
                 sys.stderr.flush()
@@ -544,10 +565,10 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                     if table_name:
                         path = table_files.get(table_name)
                         if not path:
-                            safe_name = table_name.replace("/", "_")
+                            safe_name = table_name.replace("/", "_").replace(".", "__")
                             path = os.path.join(opts.parallel_temp_dir, f"{safe_name}.sql")
                             table_files[table_name] = path
-                            table_fps[table_name] = open(path, "a", encoding="utf-8")
+                            table_fps[table_name] = open(path, "w", encoding="utf-8")
                         fp_out = table_fps[table_name]
                         table_counts[table_name] = table_counts.get(table_name, 0) + 1
                         table_bytes[table_name] = table_bytes.get(table_name, 0) + len(
