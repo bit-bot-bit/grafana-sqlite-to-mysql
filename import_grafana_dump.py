@@ -7,6 +7,7 @@ import logging
 import sys
 
 from modules.args import parse_args
+from modules.confirm import prompt_for_config_confirmation
 from modules.importer import format_summary, import_dump
 from modules.types import ParseError
 
@@ -36,6 +37,31 @@ def main(argv: list[str]) -> int:
     try:
         opts = parse_args(argv)
         add_log_file(opts.log_file)
+        if opts.config_path and not opts.skip_config_confirm:
+            prompt_for_config_confirmation(
+                "Resolved import settings:",
+                opts.config_path,
+                (
+                    ("dump_file", opts.dump_file),
+                    ("target_db", opts.target_db),
+                    ("host", opts.host),
+                    ("port", opts.port),
+                    ("user", opts.user),
+                    ("password", "<hidden>" if opts.password else "<prompted>"),
+                    ("ssl_disabled", opts.ssl_disabled),
+                    ("ssl_ca", opts.ssl_ca),
+                    ("commit_statements", opts.commit_statements),
+                    ("commit_bytes", opts.commit_bytes),
+                    ("autocommit", opts.autocommit),
+                    ("create_db", opts.create_db),
+                    ("recreate_db", opts.recreate_db),
+                    ("parallel_per_table", opts.parallel_per_table),
+                    ("parallel_workers", opts.parallel_workers),
+                    ("dry_run", opts.dry_run),
+                    ("resume", opts.resume),
+                    ("quarantine_file", opts.quarantine_file),
+                ),
+            )
         logging.info(
             "Mode: %s",
             "DRY RUN (no DB connection)" if opts.dry_run else "LIVE IMPORT",

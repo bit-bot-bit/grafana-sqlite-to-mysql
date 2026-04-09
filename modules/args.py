@@ -18,6 +18,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config", default=None, help="INI config file with default settings"
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip interactive confirmation when using --config",
+    )
     parser.add_argument("--dump-file", required=False, help="Path to .sql dump file")
     parser.add_argument("--target-db", required=False, help="Target database name")
     parser.add_argument("--host", default="127.0.0.1", help="MySQL host")
@@ -416,4 +421,6 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         ssl_cert=args.ssl_cert,
         ssl_key=args.ssl_key,
         ssl_disabled=args.ssl_disabled,
+        config_path=prelim.config,
+        skip_config_confirm=args.yes,
     )

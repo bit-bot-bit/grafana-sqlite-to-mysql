@@ -11,6 +11,7 @@ from typing import Iterable
 from getpass import getpass
 
 from modules.args import _config_bool
+from modules.confirm import prompt_for_config_confirmation
 from modules.sync import DEFAULT_TABLES, sync_from_dump
 from modules.types import ImportOptions, ParseError
 
@@ -21,6 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Diff and upsert Grafana data from a SQL dump using natural keys."
     )
     parser.add_argument("--config", default=None, help="INI config file")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip interactive confirmation when using --config",
+    )
     parser.add_argument("--dump-file", required=False, help="Path to .sql dump file")
     parser.add_argument("--target-db", required=False, help="Target database name")
     parser.add_argument("--host", default="127.0.0.1", help="MySQL host")
@@ -158,6 +164,8 @@ def to_import_options(args: argparse.Namespace) -> ImportOptions:
         ssl_cert=args.ssl_cert,
         ssl_key=args.ssl_key,
         ssl_disabled=args.ssl_disabled,
+        config_path=args.config,
+        skip_config_confirm=args.yes,
     )
 
 
@@ -172,6 +180,25 @@ def main(argv: Iterable[str]) -> int:
         if args.stage_db == args.target_db:
             raise ParseError("stage_db must be different from target_db")
         opts = to_import_options(args)
+        if args.config and not args.yes:
+            prompt_for_config_confirmation(
+                "Resolved sync settings:",
+                args.config,
+                (
+                    ("dump_file", args.dump_file),
+                    ("target_db", args.target_db),
+                    ("stage_db", args.stage_db),
+                    ("host", args.host),
+                    ("port", args.port),
+                    ("user", args.user),
+                    ("password", "<hidden>" if opts.password else "<prompted>"),
+                    ("ssl_disabled", args.ssl_disabled),
+                    ("ssl_ca", args.ssl_ca),
+                    ("tables", args.tables),
+                    ("diff_only", args.diff_only or not args.apply),
+                    ("apply", args.apply),
+                ),
+            )
         tables = [t.strip() for t in args.tables.split(",") if t.strip()]
         diff_only = args.diff_only or not args.apply
         logging.info("Sync tables: %s", ", ".join(tables))

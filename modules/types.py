@@ -61,6 +61,8 @@ class ImportOptions:
     ssl_cert: Optional[str]
     ssl_key: Optional[str]
     ssl_disabled: bool
+    config_path: Optional[str] = None
+    skip_config_confirm: bool = False
 
 
 class ParseError(Exception):
