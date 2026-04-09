@@ -477,6 +477,7 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
 
         if batch:
             process_batch(conn, batch, stats, opts, quarantine_fp)
+            batch = []
 
         for fp_out in table_fps.values():
             fp_out.close()
@@ -786,6 +787,7 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                     opts.resume_file,
                     {"mode": "linear", "offset": last_stmt_offset},
                 )
+            batch = []
 
         restore_session_toggles(conn, original_fk, original_uniq)
 
