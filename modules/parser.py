@@ -62,6 +62,11 @@ _INSERT_TABLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_INSERT_VALUES_RE = re.compile(
+    r"^\s*((?:INSERT\s+INTO|REPLACE\s+INTO|REPLACE)\s+.+?\s+VALUES\s*)(.+?)\s*;?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def extract_insert_table(statement: str) -> Optional[str]:
     # This code here extracts the table name so we can stage per-table imports.
@@ -74,6 +79,14 @@ def extract_insert_table(statement: str) -> Optional[str]:
     if match.group(3) and schema:
         return f"{schema}.{table}"
     return table
+
+
+def split_insert_values(statement: str) -> Optional[tuple[str, str]]:
+    # This code here splits INSERT/REPLACE ... VALUES into a mergeable prefix and value payload.
+    match = _INSERT_VALUES_RE.match(statement.lstrip())
+    if not match:
+        return None
+    return match.group(1), match.group(2)
 
 
 def statement_splitter(

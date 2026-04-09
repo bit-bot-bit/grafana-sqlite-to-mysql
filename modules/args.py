@@ -9,6 +9,55 @@ from typing import Iterable, Optional
 from .env import env_override
 from .types import ImportOptions, ParseError
 
+_KNOWN_CONFIG_KEYS = {
+    "mysql": {"host", "port", "user", "password", "target_db", "ssl_ca", "ssl_cert", "ssl_key", "ssl_disabled"},
+    "import": {
+        "dump_file",
+        "host",
+        "port",
+        "user",
+        "password",
+        "target_db",
+        "commit_statements",
+        "commit_bytes",
+        "disable_foreign_keys",
+        "disable_unique_checks",
+        "sql_mode",
+        "autocommit",
+        "force_charset",
+        "create_db",
+        "recreate_db",
+        "quarantine_file",
+        "quarantine_all_failures",
+        "quarantine_only_inserts",
+        "fail_on_error",
+        "progress_mb",
+        "progress_statements",
+        "progress_bar",
+        "progress_bar_logs",
+        "worker_progress",
+        "worker_progress_interval",
+        "no_auto_tune_batch",
+        "combine_inserts",
+        "combine_insert_group_size",
+        "resume",
+        "resume_file",
+        "log_file",
+        "cleanup_temp",
+        "no_purge_temp",
+        "ignore_locks",
+        "allow_delimiter",
+        "no_transforms",
+        "transform_insert_or_replace",
+        "parallel_per_table",
+        "parallel_workers",
+        "parallel_temp_dir",
+        "parallel_table_priority",
+        "dry_run",
+        "dry_run_parallel",
+    },
+}
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     # This code here defines the CLI options and defaults.
@@ -24,6 +73,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Skip interactive confirmation when using --config",
     )
     parser.add_argument("--dump-file", required=False, help="Path to .sql dump file")
+    parser.add_argument(
+        "--tables",
+        default="",
+        help="Comma-separated table names to import; skips non-matching table data and destructive dump SQL",
+    )
+    parser.add_argument(
+        "--verify-tables",
+        default="",
+        help="Comma-separated tables to count after import; logs row counts and missing-table errors",
+    )
     parser.add_argument("--target-db", required=False, help="Target database name")
     parser.add_argument("--host", default="127.0.0.1", help="MySQL host")
     parser.add_argument("--port", type=int, default=3306, help="MySQL port")
@@ -132,6 +191,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Disable auto-tuning commit batch sizes for large tables",
     )
     parser.add_argument(
+        "--combine-inserts",
+        action="store_true",
+        help="Combine consecutive compatible INSERT/REPLACE statements into larger multi-row statements",
+    )
+    parser.add_argument(
+        "--combine-insert-group-size",
+        type=int,
+        default=25,
+        help="Maximum number of consecutive INSERT/REPLACE statements to merge when --combine-inserts is enabled",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume from a checkpoint file if present",
@@ -194,6 +264,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Temp directory for per-table staging",
     )
     parser.add_argument(
+        "--parallel-table-priority",
+        default="",
+        help="Comma-separated table names to queue first in parallel mode (defaults to core Grafana parent tables)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Parse and report without executing statements",
@@ -229,6 +304,20 @@ def load_config(path: str) -> dict:
     if not parser.read(path):
         raise ParseError(f"Config file not found or unreadable: {path}")
 
+    for section in parser.sections():
+        known = _KNOWN_CONFIG_KEYS.get(section)
+        if known is None:
+            logging.warning("Unknown config section [%s] in %s", section, path)
+            continue
+        for key in parser.options(section):
+            if key not in known:
+                logging.warning(
+                    "Unknown config key [%s].%s in %s",
+                    section,
+                    key,
+                    path,
+                )
+
     def get(section: str, key: str) -> Optional[str]:
         if parser.has_option(section, key):
             return parser.get(section, key)
@@ -248,6 +337,8 @@ def load_config(path: str) -> dict:
 
     for key in (
         "dump_file",
+        "tables",
+        "verify_tables",
         "commit_statements",
         "commit_bytes",
         "disable_foreign_keys",
@@ -268,6 +359,8 @@ def load_config(path: str) -> dict:
         "worker_progress",
         "worker_progress_interval",
         "no_auto_tune_batch",
+        "combine_inserts",
+        "combine_insert_group_size",
         "resume",
         "resume_file",
         "log_file",
@@ -280,6 +373,7 @@ def load_config(path: str) -> dict:
         "parallel_per_table",
         "parallel_workers",
         "parallel_temp_dir",
+        "parallel_table_priority",
         "dry_run",
         "dry_run_parallel",
     ):
@@ -293,6 +387,7 @@ def load_config(path: str) -> dict:
         "commit_bytes",
         "progress_mb",
         "progress_statements",
+        "combine_insert_group_size",
         "parallel_workers",
     ):
         if key in config:
@@ -307,6 +402,7 @@ def load_config(path: str) -> dict:
         "quarantine_all_failures",
         "quarantine_only_inserts",
         "fail_on_error",
+        "combine_inserts",
         "ignore_locks",
         "allow_delimiter",
         "no_transforms",
@@ -346,6 +442,24 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         parser.error("--target-db is required (or set target_db in config)")
     if args.parallel_workers < 1:
         parser.error("--parallel-workers must be >= 1")
+    if args.combine_insert_group_size < 1:
+        parser.error("--combine-insert-group-size must be >= 1")
+
+    parallel_table_priority = tuple(
+        table.strip()
+        for table in str(args.parallel_table_priority or "").split(",")
+        if table.strip()
+    )
+    table_filter = tuple(
+        table.strip()
+        for table in str(args.tables or "").split(",")
+        if table.strip()
+    )
+    verify_tables = tuple(
+        table.strip()
+        for table in str(args.verify_tables or "").split(",")
+        if table.strip()
+    )
 
     if args.quarantine_only_inserts and args.quarantine_all_failures:
         args.quarantine_all_failures = False
@@ -378,6 +492,7 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
 
     return ImportOptions(
         dump_file=args.dump_file,
+        table_filter=table_filter,
         host=host,
         port=port,
         user=user,
@@ -404,6 +519,8 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         worker_progress_interval=args.worker_progress_interval,
         log_file=args.log_file,
         auto_tune_batch=not args.no_auto_tune_batch,
+        combine_inserts=args.combine_inserts,
+        combine_insert_group_size=args.combine_insert_group_size,
         resume=args.resume,
         resume_file=args.resume_file,
         ignore_locks=args.ignore_locks,
@@ -413,6 +530,8 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         parallel_per_table=args.parallel_per_table,
         parallel_workers=args.parallel_workers,
         parallel_temp_dir=args.parallel_temp_dir,
+        parallel_table_priority=parallel_table_priority,
+        verify_tables=verify_tables,
         dry_run=args.dry_run,
         dry_run_parallel=args.dry_run_parallel,
         cleanup_temp=args.cleanup_temp,

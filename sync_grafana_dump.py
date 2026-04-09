@@ -124,6 +124,7 @@ def to_import_options(args: argparse.Namespace) -> ImportOptions:
         password = getpass("MySQL password: ")
     return ImportOptions(
         dump_file=args.dump_file,
+        table_filter=(),
         host=args.host,
         port=args.port,
         user=args.user,
@@ -150,6 +151,8 @@ def to_import_options(args: argparse.Namespace) -> ImportOptions:
         worker_progress_interval=5.0,
         log_file=None,
         auto_tune_batch=True,
+        combine_inserts=False,
+        combine_insert_group_size=25,
         resume=False,
         resume_file="import.resume.json",
         cleanup_temp=False,
@@ -161,6 +164,8 @@ def to_import_options(args: argparse.Namespace) -> ImportOptions:
         parallel_per_table=False,
         parallel_workers=4,
         parallel_temp_dir="/tmp/grafana-import",
+        parallel_table_priority=(),
+        verify_tables=(),
         dry_run=False,
         dry_run_parallel=False,
         ssl_ca=args.ssl_ca,
@@ -184,6 +189,24 @@ def main(argv: Iterable[str]) -> int:
             raise ParseError("stage_db must be different from target_db")
         opts = to_import_options(args)
         if args.config and not args.yes:
+            ssl_mode = "disabled" if args.ssl_disabled else (
+                "custom" if (args.ssl_ca or args.ssl_cert or args.ssl_key) else "default"
+            )
+            ssl_ca_display = (
+                "<ignored because ssl_disabled=true>"
+                if args.ssl_disabled and args.ssl_ca
+                else args.ssl_ca
+            )
+            ssl_cert_display = (
+                "<ignored because ssl_disabled=true>"
+                if args.ssl_disabled and args.ssl_cert
+                else args.ssl_cert
+            )
+            ssl_key_display = (
+                "<ignored because ssl_disabled=true>"
+                if args.ssl_disabled and args.ssl_key
+                else args.ssl_key
+            )
             prompt_for_config_confirmation(
                 "Resolved sync settings:",
                 args.config,
@@ -195,8 +218,10 @@ def main(argv: Iterable[str]) -> int:
                     ("port", args.port),
                     ("user", args.user),
                     ("password", "<hidden>" if opts.password else "<prompted>"),
-                    ("ssl_disabled", args.ssl_disabled),
-                    ("ssl_ca", args.ssl_ca),
+                    ("ssl_mode", ssl_mode),
+                    ("ssl_ca", ssl_ca_display),
+                    ("ssl_cert", ssl_cert_display),
+                    ("ssl_key", ssl_key_display),
                     ("tables", args.tables),
                     ("diff_only", args.diff_only or not args.apply),
                     ("apply", args.apply),

@@ -14,6 +14,7 @@ from .db import (
     apply_session_toggles,
     build_connection,
     ensure_database,
+    fetch_server_identity,
     restore_session_toggles,
     select_database,
 )
@@ -21,9 +22,20 @@ from .parser import (
     extract_insert_table,
     is_insert_or_replace_or_update,
     maybe_transform_statement,
+    split_insert_values,
     statement_splitter,
 )
 from .types import ImportOptions, ImportStats
+
+DEFAULT_PARALLEL_TABLE_PRIORITY = (
+    "org",
+    "user",
+    "team",
+    "folder",
+    "dashboard",
+    "data_source",
+)
+_STAGE_DIRNAME = "tables"
 
 
 def log_progress(stats: ImportStats) -> None:
@@ -42,6 +54,131 @@ def log_progress(stats: ImportStats) -> None:
 
 def execute_statement(cursor, statement: str) -> None:
     cursor.execute(statement)
+
+
+def _merge_insert_statements(
+    group: list[tuple[str, int, int]],
+) -> tuple[str, int, int] | None:
+    if len(group) < 2:
+        return None
+    prefix = None
+    values: list[str] = []
+    for statement, _, _ in group:
+        parts = split_insert_values(statement)
+        if parts is None:
+            return None
+        stmt_prefix, stmt_values = parts
+        if prefix is None:
+            prefix = stmt_prefix
+        elif stmt_prefix != prefix:
+            return None
+        values.append(stmt_values.rstrip().rstrip(";"))
+    if prefix is None:
+        return None
+    return prefix + ",".join(values) + ";", group[0][1], group[-1][2]
+
+
+def _coalesce_batch(
+    batch: list[tuple[str, int, int]],
+    opts: ImportOptions,
+) -> list[tuple[tuple[str, int, int], list[tuple[str, int, int]]]]:
+    if not opts.combine_inserts:
+        return [
+            ((statement, start_line, end_line), [(statement, start_line, end_line)])
+            for statement, start_line, end_line in batch
+        ]
+
+    groups: list[tuple[tuple[str, int, int], list[tuple[str, int, int]]]] = []
+    pending: list[tuple[str, int, int]] = []
+    pending_prefix: str | None = None
+
+    def flush_pending() -> None:
+        nonlocal pending, pending_prefix
+        if not pending:
+            return
+        merged = _merge_insert_statements(pending)
+        if merged is None:
+            for item in pending:
+                groups.append((item, [item]))
+        else:
+            groups.append((merged, list(pending)))
+        pending = []
+        pending_prefix = None
+
+    for statement, start_line, end_line in batch:
+        parts = split_insert_values(statement)
+        if parts is None:
+            flush_pending()
+            groups.append(
+                ((statement, start_line, end_line), [(statement, start_line, end_line)])
+            )
+            continue
+        stmt_prefix, _ = parts
+        if pending and (
+            stmt_prefix != pending_prefix
+            or len(pending) >= opts.combine_insert_group_size
+        ):
+            flush_pending()
+        pending.append((statement, start_line, end_line))
+        pending_prefix = stmt_prefix
+    flush_pending()
+    return groups
+
+
+def _ordered_table_items(
+    table_files: dict[str, str], table_priority: tuple[str, ...]
+) -> list[tuple[str, str]]:
+    # This code here lets operators pull selected tables to the front of the queue.
+    effective_priority = table_priority or DEFAULT_PARALLEL_TABLE_PRIORITY
+    priority_rank = {name: index for index, name in enumerate(effective_priority)}
+    return sorted(
+        table_files.items(),
+        key=lambda item: (
+            priority_rank.get(item[0], len(priority_rank)),
+            item[0],
+        ),
+    )
+
+
+def _parallel_stage_dir(base_dir: str) -> str:
+    return os.path.join(base_dir, _STAGE_DIRNAME)
+
+
+def _parallel_stage_path(base_dir: str, table_name: str) -> str:
+    safe_name = table_name.replace("/", "_").replace(".", "__")
+    return os.path.join(_parallel_stage_dir(base_dir), f"{safe_name}.sql")
+
+
+def _purge_parallel_stage_dir(base_dir: str) -> None:
+    stage_dir = _parallel_stage_dir(base_dir)
+    if not os.path.isdir(stage_dir):
+        return
+    for name in os.listdir(stage_dir):
+        if name.endswith(".sql"):
+            try:
+                os.remove(os.path.join(stage_dir, name))
+            except Exception:
+                logging.warning("Failed to remove temp file %s", name)
+
+
+def _should_process_statement(statement: str, opts: ImportOptions) -> bool:
+    table_name = extract_insert_table(statement)
+    if not opts.table_filter:
+        return True
+    if table_name:
+        return table_name.split(".")[-1] in opts.table_filter
+    return False
+
+
+def _log_server_identity(conn) -> None:
+    identity = fetch_server_identity(conn)
+    logging.info(
+        "Server: host=%s uuid=%s read_only=%s database=%s",
+        identity["hostname"],
+        identity["server_uuid"],
+        identity["read_only"],
+        identity["database"],
+    )
 
 
 class ProgressBar:
@@ -144,10 +281,11 @@ def process_batch(
     cursor = conn.cursor()
     ok = 0
     failed = 0
+    grouped_batch = _coalesce_batch(batch, opts)
     try:
         if not opts.autocommit:
             conn.begin()
-        for statement, _, _ in batch:
+        for (statement, _, _), _original_group in grouped_batch:
             execute_statement(cursor, statement)
         if not opts.autocommit:
             conn.commit()
@@ -160,7 +298,7 @@ def process_batch(
     except Exception:
         if not opts.autocommit:
             conn.rollback()
-        for statement, start_line, end_line in batch:
+        for (statement, start_line, end_line), original_group in grouped_batch:
             try:
                 if not opts.autocommit:
                     conn.begin()
@@ -169,37 +307,88 @@ def process_batch(
                     conn.commit()
                 if stats_lock:
                     with stats_lock:
-                        stats.statements_ok += 1
+                        stats.statements_ok += len(original_group)
                 else:
-                    stats.statements_ok += 1
-                ok += 1
+                    stats.statements_ok += len(original_group)
+                ok += len(original_group)
             except Exception as err:
                 if not opts.autocommit:
                     conn.rollback()
-                if stats_lock:
-                    with stats_lock:
+                if len(original_group) == 1:
+                    if stats_lock:
+                        with stats_lock:
+                            stats.statements_failed += 1
+                    else:
                         stats.statements_failed += 1
-                else:
-                    stats.statements_failed += 1
-                failed += 1
-                if should_quarantine(statement, opts):
-                    if quarantine_lock:
-                        with quarantine_lock:
+                    failed += 1
+                    if should_quarantine(statement, opts):
+                        if quarantine_lock:
+                            with quarantine_lock:
+                                write_quarantine(
+                                    quarantine_fp, statement, err, start_line, end_line
+                                )
+                        else:
                             write_quarantine(
                                 quarantine_fp, statement, err, start_line, end_line
                             )
-                    else:
-                        write_quarantine(
-                            quarantine_fp, statement, err, start_line, end_line
+                    logging.error(
+                        "Statement failed at lines %d-%d: %s",
+                        start_line,
+                        end_line,
+                        err,
+                    )
+                    if opts.fail_on_error:
+                        raise
+                    continue
+
+                for original_statement, original_start, original_end in original_group:
+                    try:
+                        if not opts.autocommit:
+                            conn.begin()
+                        execute_statement(cursor, original_statement)
+                        if not opts.autocommit:
+                            conn.commit()
+                        if stats_lock:
+                            with stats_lock:
+                                stats.statements_ok += 1
+                        else:
+                            stats.statements_ok += 1
+                        ok += 1
+                    except Exception as item_err:
+                        if not opts.autocommit:
+                            conn.rollback()
+                        if stats_lock:
+                            with stats_lock:
+                                stats.statements_failed += 1
+                        else:
+                            stats.statements_failed += 1
+                        failed += 1
+                        if should_quarantine(original_statement, opts):
+                            if quarantine_lock:
+                                with quarantine_lock:
+                                    write_quarantine(
+                                        quarantine_fp,
+                                        original_statement,
+                                        item_err,
+                                        original_start,
+                                        original_end,
+                                    )
+                            else:
+                                write_quarantine(
+                                    quarantine_fp,
+                                    original_statement,
+                                    item_err,
+                                    original_start,
+                                    original_end,
+                                )
+                        logging.error(
+                            "Statement failed at lines %d-%d: %s",
+                            original_start,
+                            original_end,
+                            item_err,
                         )
-                logging.error(
-                    "Statement failed at lines %d-%d: %s",
-                    start_line,
-                    end_line,
-                    err,
-                )
-                if opts.fail_on_error:
-                    raise
+                        if opts.fail_on_error:
+                            raise
     finally:
         cursor.close()
     return ok, failed
@@ -219,12 +408,20 @@ def _parallel_worker(
     completed_tables: list[tuple[str, int, int, int]],
     completed_lock: threading.Lock,
     resume_path: Optional[str],
+    worker_errors: list[tuple[int, str, str]],
+    error_lock: threading.Lock,
+    stop_event: threading.Event,
 ) -> None:
     # This code here is a worker that eats one table file at a time.
     conn = build_connection(opts)
     select_database(conn, opts.target_db)
+    original_fk = None
+    original_uniq = None
     try:
+        original_fk, original_uniq = apply_session_toggles(conn, opts)
         while True:
+            if stop_event.is_set():
+                break
             item = table_queue.get()
             if item is None:
                 table_queue.task_done()
@@ -332,7 +529,25 @@ def _parallel_worker(
                         "failed": 0,
                     }
                 table_queue.task_done()
+    except Exception as err:
+        stop_event.set()
+        with error_lock:
+            worker_errors.append((worker_id, worker_status.get(worker_id, {}).get("table") or "-", str(err)))
+        logging.error("Worker %d failed: %s", worker_id, err)
+        while True:
+            try:
+                pending = table_queue.get_nowait()
+            except queue.Empty:
+                break
+            table_queue.task_done()
+            if pending is None:
+                continue
     finally:
+        if original_fk is not None or original_uniq is not None:
+            try:
+                restore_session_toggles(conn, original_fk, original_uniq)
+            except Exception:
+                logging.warning("Worker failed to restore session toggles")
         conn.close()
 
 
@@ -399,24 +614,24 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
     worker_status: dict[int, dict] = {}
     completed_tables: list[tuple[str, int, int, int]] = []
     completed_names: set[str] = set()
+    worker_errors: list[tuple[int, str, str]] = []
+    error_lock = threading.Lock()
+    stop_event = threading.Event()
 
     os.makedirs(opts.parallel_temp_dir, exist_ok=True)
+    os.makedirs(_parallel_stage_dir(opts.parallel_temp_dir), exist_ok=True)
     resume_path = opts.resume_file if opts.resume else None
     if resume_path:
         resume_data = _read_resume_file(resume_path)
         if resume_data and resume_data.get("mode") == "parallel":
             completed_names = set(resume_data.get("completed_tables", []))
     if opts.purge_temp:
-        for name in os.listdir(opts.parallel_temp_dir):
-            if name.endswith(".sql"):
-                try:
-                    os.remove(os.path.join(opts.parallel_temp_dir, name))
-                except Exception:
-                    logging.warning("Failed to remove temp file %s", name)
+        _purge_parallel_stage_dir(opts.parallel_temp_dir)
 
     progress = ProgressBar(opts.progress_bar, os.path.getsize(opts.dump_file))
     try:
         ensure_database(conn, opts)
+        _log_server_identity(conn)
         original_fk, original_uniq = apply_session_toggles(conn, opts)
         quarantine_fp = open(opts.quarantine_file, "a", encoding="utf-8")
 
@@ -446,13 +661,14 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                 transformed = maybe_transform_statement(statement, opts)
                 if transformed is None:
                     continue
+                if not _should_process_statement(transformed, opts):
+                    continue
 
                 table_name = extract_insert_table(transformed)
                 if table_name:
                     path = table_files.get(table_name)
                     if not path:
-                        safe_name = table_name.replace("/", "_").replace(".", "__")
-                        path = os.path.join(opts.parallel_temp_dir, f"{safe_name}.sql")
+                        path = _parallel_stage_path(opts.parallel_temp_dir, table_name)
                         table_files[table_name] = path
                         table_fps[table_name] = open(
                             path, "w", encoding="utf-8"
@@ -512,6 +728,9 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                     completed_tables,
                     completed_lock,
                     resume_path,
+                    worker_errors,
+                    error_lock,
+                    stop_event,
                 ),
                 daemon=True,
             )
@@ -547,7 +766,9 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
             progress_thread = threading.Thread(target=progress_table, daemon=True)
             progress_thread.start()
 
-        for table_name, path in table_files.items():
+        for table_name, path in _ordered_table_items(
+            table_files, opts.parallel_table_priority
+        ):
             if table_name in completed_names:
                 logging.info("Skipping completed table %s (resume)", table_name)
                 continue
@@ -560,6 +781,11 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
             progress_thread.join()
         for thread in workers:
             thread.join()
+        if worker_errors:
+            worker_id, table_name, err = worker_errors[0]
+            raise RuntimeError(
+                f"Worker {worker_id} failed while processing table {table_name}: {err}"
+            )
 
         restore_session_toggles(conn, original_fk, original_uniq)
 
@@ -583,6 +809,10 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
                 except Exception:
                     logging.warning("Failed to remove temp file %s", path)
             try:
+                os.rmdir(_parallel_stage_dir(opts.parallel_temp_dir))
+            except Exception:
+                pass
+            try:
                 os.rmdir(opts.parallel_temp_dir)
             except Exception:
                 pass
@@ -605,13 +835,9 @@ def import_dump(opts: ImportOptions) -> ImportStats:
         progress = ProgressBar(opts.progress_bar, os.path.getsize(opts.dump_file))
         if opts.dry_run_parallel:
             os.makedirs(opts.parallel_temp_dir, exist_ok=True)
+            os.makedirs(_parallel_stage_dir(opts.parallel_temp_dir), exist_ok=True)
             if opts.purge_temp:
-                for name in os.listdir(opts.parallel_temp_dir):
-                    if name.endswith(".sql"):
-                        try:
-                            os.remove(os.path.join(opts.parallel_temp_dir, name))
-                        except Exception:
-                            logging.warning("Failed to remove temp file %s", name)
+                _purge_parallel_stage_dir(opts.parallel_temp_dir)
             table_files: dict[str, str] = {}
             table_fps: dict[str, object] = {}
             table_counts: dict[str, int] = {}
@@ -634,14 +860,15 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                 transformed = maybe_transform_statement(statement, opts)
                 if transformed is None:
                     continue
+                if not _should_process_statement(transformed, opts):
+                    continue
                 stats.statements_ok += 1
                 if opts.dry_run_parallel:
                     table_name = extract_insert_table(transformed)
                     if table_name:
                         path = table_files.get(table_name)
                         if not path:
-                            safe_name = table_name.replace("/", "_").replace(".", "__")
-                            path = os.path.join(opts.parallel_temp_dir, f"{safe_name}.sql")
+                            path = _parallel_stage_path(opts.parallel_temp_dir, table_name)
                             table_files[table_name] = path
                             table_fps[table_name] = open(path, "w", encoding="utf-8")
                         fp_out = table_fps[table_name]
@@ -680,6 +907,10 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                     os.remove(path)
                 except Exception:
                     logging.warning("Failed to remove temp file %s", path)
+            try:
+                os.rmdir(_parallel_stage_dir(opts.parallel_temp_dir))
+            except Exception:
+                pass
             try:
                 os.rmdir(opts.parallel_temp_dir)
             except Exception:
@@ -723,6 +954,7 @@ def import_dump(opts: ImportOptions) -> ImportStats:
     last_stmt_offset = 0
     try:
         ensure_database(conn, opts)
+        _log_server_identity(conn)
         original_fk, original_uniq = apply_session_toggles(conn, opts)
 
         quarantine_fp = open(opts.quarantine_file, "a", encoding="utf-8")
@@ -735,11 +967,15 @@ def import_dump(opts: ImportOptions) -> ImportStats:
                 offset = int(resume_data.get("offset", 0))
                 if offset > 0:
                     fp.seek(offset)
+
+            file_offset = fp.tell()
+
             def line_reader() -> Iterable[str]:
                 nonlocal file_offset, last_stmt_offset
                 for line in fp:
-                    stats.bytes_read += len(line.encode("utf-8"))
-                    file_offset = fp.tell()
+                    line_bytes = len(line.encode("utf-8"))
+                    stats.bytes_read += line_bytes
+                    file_offset += line_bytes
                     last_stmt_offset = file_offset
                     progress.update(stats)
                     yield line
@@ -762,6 +998,8 @@ def import_dump(opts: ImportOptions) -> ImportStats:
 
                 transformed = maybe_transform_statement(statement, opts)
                 if transformed is None:
+                    continue
+                if not _should_process_statement(transformed, opts):
                     continue
 
                 batch.append((transformed, start_line, end_line))

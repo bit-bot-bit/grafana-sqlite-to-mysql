@@ -7,6 +7,7 @@ from modules.types import ImportOptions, ParseError
 def _opts(**overrides):
     base = dict(
         dump_file="/tmp/x.sql",
+        table_filter=(),
         host="127.0.0.1",
         port=3306,
         user="root",
@@ -32,6 +33,8 @@ def _opts(**overrides):
         worker_progress=False,
         worker_progress_interval=5.0,
         auto_tune_batch=True,
+        combine_inserts=False,
+        combine_insert_group_size=25,
         resume=False,
         resume_file="import.resume.json",
         log_file=None,
@@ -44,6 +47,8 @@ def _opts(**overrides):
         parallel_per_table=False,
         parallel_workers=4,
         parallel_temp_dir="/tmp/grafana-import",
+        parallel_table_priority=(),
+        verify_tables=(),
         dry_run=False,
         dry_run_parallel=False,
         ssl_ca=None,

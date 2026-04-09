@@ -84,6 +84,8 @@ disable_foreign_keys = true
 disable_unique_checks = true
 sql_mode =
 autocommit = false
+combine_inserts = false
+combine_insert_group_size = 25
 force_charset = utf8mb4
 create_db = true
 recreate_db = false
@@ -144,6 +146,16 @@ Auto-tuned batch sizes
 By default, large dumps (or large per-table files in parallel mode) will auto-tune
 `commit_statements` and `commit_bytes` upward. Use `--no-auto-tune-batch` to disable.
 
+Combined multi-row inserts
+--------------------------
+Use `--combine-inserts` to merge consecutive compatible `INSERT` or `REPLACE`
+statements into a single multi-row statement before execution. Use
+`--combine-insert-group-size` to cap how many original statements may be merged
+at once.
+
+If a merged statement fails, the importer falls back to the original statements
+inside that merged group and continues isolating failures normally.
+
 Resume mode
 -----------
 Use `--resume` to write and reuse a checkpoint file (`--resume-file`) so the import
@@ -175,6 +187,18 @@ password prompting and does not connect to MySQL.
 
 Use `--dry-run-parallel` with `--dry-run` to stage per-table temp files for
 parallel import sizing.
+
+Performance simulation
+----------------------
+Use `generate_perf_fixture.py` to build a synthetic benchmark fixture with many
+tables and inserts:
+```
+python3 generate_perf_fixture.py --output-dir .perf-fixture --target-size-mib 1024
+```
+
+Then use `docker-compose.perf.yml` with Docker or Podman to load `schema.sql`
+and run the importer against the generated `dump.sql`. See `PERF_SIMULATION.md`
+for the full workflow.
 
 Behavior notes
 --------------
