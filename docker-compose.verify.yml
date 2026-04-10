@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: docker.io/library/mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: grafana_verify
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  verifier:
+    image: docker.io/library/python:3.11-slim
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./:/workspace:Z
+    depends_on:
+      mysql:
+        condition: service_healthy

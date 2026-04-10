@@ -145,3 +145,18 @@ def restore_session_toggles(
             cursor.execute("SET UNIQUE_CHECKS=%s", (original_uniq,))
     finally:
         cursor.close()
+
+
+def fetch_server_identity(conn) -> dict[str, object]:
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT @@hostname, @@server_uuid, @@read_only, DATABASE()")
+        hostname, server_uuid, read_only, database = cursor.fetchone()
+        return {
+            "hostname": hostname,
+            "server_uuid": server_uuid,
+            "read_only": bool(read_only),
+            "database": database,
+        }
+    finally:
+        cursor.close()

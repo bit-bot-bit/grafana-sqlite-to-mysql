@@ -1,12 +1,18 @@
 import unittest
 
-from modules.parser import extract_insert_table, maybe_transform_statement, statement_splitter
+from modules.parser import (
+    count_insert_values_rows,
+    extract_insert_table,
+    maybe_transform_statement,
+    statement_splitter,
+)
 from modules.types import ImportOptions, ParseError
 
 
 def _opts(**overrides):
     base = dict(
         dump_file="/tmp/x.sql",
+        table_filter=(),
         host="127.0.0.1",
         port=3306,
         user="root",
@@ -32,6 +38,8 @@ def _opts(**overrides):
         worker_progress=False,
         worker_progress_interval=5.0,
         auto_tune_batch=True,
+        combine_inserts=False,
+        combine_insert_group_size=25,
         resume=False,
         resume_file="import.resume.json",
         log_file=None,
@@ -44,6 +52,8 @@ def _opts(**overrides):
         parallel_per_table=False,
         parallel_workers=4,
         parallel_temp_dir="/tmp/grafana-import",
+        parallel_table_priority=(),
+        verify_tables=(),
         dry_run=False,
         dry_run_parallel=False,
         ssl_ca=None,
@@ -110,6 +120,18 @@ class TransformTests(unittest.TestCase):
         self.assertEqual(
             extract_insert_table("INSERT INTO db1.baz VALUES (1);"),
             "db1.baz",
+        )
+
+    def test_count_insert_values_rows(self):
+        self.assertEqual(
+            count_insert_values_rows("INSERT INTO foo VALUES (1), (2), (3);"),
+            3,
+        )
+        self.assertEqual(
+            count_insert_values_rows(
+                "INSERT OR REPLACE INTO foo VALUES (1, '{\"k\":\"v\"}'), (2, 'a,b');"
+            ),
+            2,
         )
 
 

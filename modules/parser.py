@@ -58,8 +58,13 @@ def maybe_transform_statement(statement: str, opts: ImportOptions) -> Optional[s
 
 
 _INSERT_TABLE_RE = re.compile(
-    r"^(INSERT\s+INTO|REPLACE\s+INTO|REPLACE)\s+`?([\w$]+)`?(?:\.`?([\w$]+)`?)?",
+    r"^(INSERT\s+OR\s+REPLACE\s+INTO|INSERT\s+INTO|REPLACE\s+INTO|REPLACE)\s+`?([\w$]+)`?(?:\.`?([\w$]+)`?)?",
     re.IGNORECASE,
+)
+
+_INSERT_VALUES_RE = re.compile(
+    r"^\s*((?:INSERT\s+OR\s+REPLACE\s+INTO|INSERT\s+INTO|REPLACE\s+INTO|REPLACE)\s+.+?\s+VALUES\s*)(.+?)\s*;?\s*$",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -74,6 +79,45 @@ def extract_insert_table(statement: str) -> Optional[str]:
     if match.group(3) and schema:
         return f"{schema}.{table}"
     return table
+
+
+def split_insert_values(statement: str) -> Optional[tuple[str, str]]:
+    # This code here splits INSERT/REPLACE ... VALUES into a mergeable prefix and value payload.
+    match = _INSERT_VALUES_RE.match(statement.lstrip())
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def count_insert_values_rows(statement: str) -> Optional[int]:
+    # This code here counts top-level row tuples in INSERT/REPLACE ... VALUES lists.
+    parts = split_insert_values(statement)
+    if parts is None:
+        return None
+    values = parts[1]
+    in_single = False
+    in_double = False
+    in_backtick = False
+    depth = 0
+    rows = 0
+    prev = ""
+
+    for ch in values:
+        if ch == "'" and not (in_double or in_backtick) and prev != "\\":
+            in_single = not in_single
+        elif ch == '"' and not (in_single or in_backtick) and prev != "\\":
+            in_double = not in_double
+        elif ch == "`" and not (in_single or in_double):
+            in_backtick = not in_backtick
+        elif not (in_single or in_double or in_backtick):
+            if ch == "(":
+                if depth == 0:
+                    rows += 1
+                depth += 1
+            elif ch == ")" and depth > 0:
+                depth -= 1
+        prev = ch
+    return rows if rows > 0 else None
 
 
 def statement_splitter(

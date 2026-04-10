@@ -3,3 +3,7 @@ __pycache__/
 quarantine_failures.sql
 *.log
 /tmp/grafana-import/
+.perf-150m/
+.tmp_perf_smoke/
+.tmp_perf_fixture/
+iteration_quarantine.sql

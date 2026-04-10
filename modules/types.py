@@ -44,6 +44,8 @@ class ImportOptions:
     worker_progress: bool
     worker_progress_interval: float
     auto_tune_batch: bool
+    combine_inserts: bool
+    combine_insert_group_size: int
     resume: bool
     resume_file: str
     ignore_locks: bool
@@ -53,6 +55,9 @@ class ImportOptions:
     parallel_per_table: bool
     parallel_workers: int
     parallel_temp_dir: str
+    parallel_table_priority: tuple[str, ...]
+    table_filter: tuple[str, ...]
+    verify_tables: tuple[str, ...]
     dry_run: bool
     dry_run_parallel: bool
     cleanup_temp: bool
@@ -61,6 +66,8 @@ class ImportOptions:
     ssl_cert: Optional[str]
     ssl_key: Optional[str]
     ssl_disabled: bool
+    config_path: Optional[str] = None
+    skip_config_confirm: bool = False
 
 
 class ParseError(Exception):
