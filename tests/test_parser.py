@@ -1,6 +1,11 @@
 import unittest
 
-from modules.parser import extract_insert_table, maybe_transform_statement, statement_splitter
+from modules.parser import (
+    count_insert_values_rows,
+    extract_insert_table,
+    maybe_transform_statement,
+    statement_splitter,
+)
 from modules.types import ImportOptions, ParseError
 
 
@@ -115,6 +120,18 @@ class TransformTests(unittest.TestCase):
         self.assertEqual(
             extract_insert_table("INSERT INTO db1.baz VALUES (1);"),
             "db1.baz",
+        )
+
+    def test_count_insert_values_rows(self):
+        self.assertEqual(
+            count_insert_values_rows("INSERT INTO foo VALUES (1), (2), (3);"),
+            3,
+        )
+        self.assertEqual(
+            count_insert_values_rows(
+                "INSERT OR REPLACE INTO foo VALUES (1, '{\"k\":\"v\"}'), (2, 'a,b');"
+            ),
+            2,
         )
 
 

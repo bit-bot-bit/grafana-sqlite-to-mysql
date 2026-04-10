@@ -156,6 +156,11 @@ at once.
 If a merged statement fails, the importer falls back to the original statements
 inside that merged group and continues isolating failures normally.
 
+This option is most useful when the source dump is dominated by one-row or
+very small insert statements. If the dump already uses multi-row inserts, extra
+coalescing may be neutral or slower and should be benchmarked before making it
+the default.
+
 Resume mode
 -----------
 Use `--resume` to write and reuse a checkpoint file (`--resume-file`) so the import
@@ -199,6 +204,53 @@ python3 generate_perf_fixture.py --output-dir .perf-fixture --target-size-mib 10
 Then use `docker-compose.perf.yml` with Docker or Podman to load `schema.sql`
 and run the importer against the generated `dump.sql`. See `PERF_SIMULATION.md`
 for the full workflow.
+
+Post-import verification
+------------------------
+Use `verify_import_tables.py` to compare expected row counts from a dump against
+actual row counts in MySQL:
+
+```bash
+python3 verify_import_tables.py \
+  --dump-file grafana.sql \
+  --target-db grafana \
+  --host 127.0.0.1 \
+  --user root
+```
+
+To limit verification to selected tables:
+
+```bash
+python3 verify_import_tables.py \
+  --dump-file grafana.sql \
+  --target-db grafana \
+  --tables dashboard,annotation,alert_rule_version
+```
+
+This script compares row counts implied by the dump's `INSERT` or `REPLACE`
+statements with live MySQL counts. If the import quarantined failures or skipped
+bad rows, mismatches are expected and should be interpreted together with the
+quarantine file.
+
+Benchmark notes
+---------------
+Recent local benchmark artifacts in this repo:
+
+- `TEST_REPORT.md`: current unit-test status
+- `PERFORMANCE_TUNING.md`: configuration guidance for throughput tuning
+- `PERF_SMOKE_REPORT.md`: end-to-end synthetic smoke test
+- `PERF_150MB_REPORT.md`: 150 MiB comparison of baseline vs `--combine-inserts`
+- `ITERATION_TEST_REPORT.md`: bad-insert fallback behavior for merged groups
+
+The 150 MiB benchmark showed:
+
+- baseline parallel import: `25.5s`
+- combined inserts (`--combine-inserts --combine-insert-group-size 25`): `33.1s`
+
+That synthetic dump already used 10 rows per source `INSERT`, so the benchmark
+shows that additional coalescing is not automatically a win. The feature is
+more likely to help when the source dump uses one-row inserts or very small
+insert statements.
 
 Behavior notes
 --------------
