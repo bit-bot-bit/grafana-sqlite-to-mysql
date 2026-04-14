@@ -218,6 +218,47 @@ python3 verify_import_tables.py \
   --user root
 ```
 
+Pre-scan dump for risky data rows
+--------------------------------
+Use `scan_sql_dump_risks.py` to scan a dump for data patterns that are likely to
+confuse the importer, especially rows with backslash-plus-quote sequences in
+dashboard or alert payloads.
+
+Scan the full dump:
+```bash
+python3 scan_sql_dump_risks.py --dump-file grafana.sql
+```
+
+Scan only dashboards and alerts:
+```bash
+python3 scan_sql_dump_risks.py \
+  --dump-file grafana.sql \
+  --tables dashboard,alert_rule \
+  --limit 100
+```
+
+Emit JSON output:
+```bash
+python3 scan_sql_dump_risks.py \
+  --dump-file grafana.sql \
+  --tables dashboard,alert_rule \
+  --json
+```
+
+What it checks:
+- High-risk backslash-before-single-quote patterns in statement payloads
+- Other multi-backslash quote patterns worth manual review
+- Whether the `INSERT OR REPLACE` rewrite changed payload bytes after the keyword swap
+
+What to send back if it finds something:
+- The finding code, especially `even_backslashes_before_single_quote`
+- The `lines=...` range
+- The `table=...` value
+- The emitted snippet
+
+This scanner is aimed at bad or risky data rows in the dump itself. It is not a
+general SQL validator and does not replace a real import or post-import verification.
+
 To limit verification to selected tables:
 
 ```bash
@@ -236,11 +277,11 @@ Benchmark notes
 ---------------
 Recent local benchmark artifacts in this repo:
 
-- `TEST_REPORT.md`: current unit-test status
+- `reports/TEST_REPORT.md`: current unit-test status
 - `PERFORMANCE_TUNING.md`: configuration guidance for throughput tuning
-- `PERF_SMOKE_REPORT.md`: end-to-end synthetic smoke test
-- `PERF_150MB_REPORT.md`: 150 MiB comparison of baseline vs `--combine-inserts`
-- `ITERATION_TEST_REPORT.md`: bad-insert fallback behavior for merged groups
+- `reports/PERF_SMOKE_REPORT.md`: end-to-end synthetic smoke test
+- `reports/PERF_150MB_REPORT.md`: 150 MiB comparison of baseline vs `--combine-inserts`
+- `reports/ITERATION_TEST_REPORT.md`: bad-insert fallback behavior for merged groups
 
 The 150 MiB benchmark showed:
 

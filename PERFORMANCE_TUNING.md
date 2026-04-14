@@ -164,7 +164,7 @@ If a merged statement fails:
 - good rows can still succeed
 - bad rows can still be quarantined
 
-This fallback was validated in [ITERATION_TEST_REPORT.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/ITERATION_TEST_REPORT.md).
+This fallback was validated in [ITERATION_TEST_REPORT.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/reports/ITERATION_TEST_REPORT.md).
 
 ### When it is most likely to help
 
@@ -339,5 +339,5 @@ combine_inserts = false
 
 - [README.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/README.md)
 - [PERF_SIMULATION.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/PERF_SIMULATION.md)
-- [PERF_150MB_REPORT.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/PERF_150MB_REPORT.md)
-- [ITERATION_TEST_REPORT.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/ITERATION_TEST_REPORT.md)
+- [PERF_150MB_REPORT.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/reports/PERF_150MB_REPORT.md)
+- [ITERATION_TEST_REPORT.md](/home/tearle/Work/sql_dump/git-grafana/grafana-sqlite-to-mysql/reports/ITERATION_TEST_REPORT.md)
