@@ -52,6 +52,7 @@ _KNOWN_CONFIG_KEYS = {
         "parallel_per_table",
         "parallel_workers",
         "parallel_temp_dir",
+        "ordered_table_insert",
         "parallel_table_priority",
         "dry_run",
         "dry_run_parallel",
@@ -264,6 +265,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Temp directory for per-table staging",
     )
     parser.add_argument(
+        "--ordered-table-insert",
+        action="store_true",
+        help="In parallel mode, derive a parent-first table queue order from dump dependencies",
+    )
+    parser.add_argument(
         "--parallel-table-priority",
         default="",
         help="Comma-separated table names to queue first in parallel mode (defaults to core Grafana parent tables)",
@@ -373,6 +379,7 @@ def load_config(path: str) -> dict:
         "parallel_per_table",
         "parallel_workers",
         "parallel_temp_dir",
+        "ordered_table_insert",
         "parallel_table_priority",
         "dry_run",
         "dry_run_parallel",
@@ -408,6 +415,7 @@ def load_config(path: str) -> dict:
         "no_transforms",
         "transform_insert_or_replace",
         "parallel_per_table",
+        "ordered_table_insert",
         "dry_run",
         "dry_run_parallel",
         "cleanup_temp",
@@ -530,6 +538,7 @@ def parse_args(argv: Iterable[str]) -> ImportOptions:
         parallel_per_table=args.parallel_per_table,
         parallel_workers=args.parallel_workers,
         parallel_temp_dir=args.parallel_temp_dir,
+        ordered_table_insert=args.ordered_table_insert,
         parallel_table_priority=parallel_table_priority,
         verify_tables=verify_tables,
         dry_run=args.dry_run,

@@ -111,6 +111,7 @@ no_transforms = false
 transform_insert_or_replace = true
 parallel_per_table = false
 parallel_workers = 4
+ordered_table_insert = false
 parallel_temp_dir = /tmp/grafana-import
 dry_run = false
 dry_run_parallel = false
@@ -184,6 +185,11 @@ Enable with `--parallel-per-table` to stage INSERT/REPLACE statements per table
 into temp files, then import those files concurrently. Non-INSERT statements
 are executed serially in the main pass. This is best when tables are independent
 and foreign keys are disabled. Temp files are written under `parallel_temp_dir`.
+
+Use `--ordered-table-insert` to derive a parent-first queue order from dump
+dependencies before workers start. This helps parallel mode prioritize parent
+tables ahead of dependent tables, but it does not fully serialize dependency
+layers across workers.
 
 Dry run
 -------
@@ -330,6 +336,44 @@ What it reports:
 - Dependency spread per table (`depends_on` / `referenced_by`)
 - Explicit schema edges and inferred soft-reference edges
 - Cycles when no clean topological order exists
+
+Pre-scan decoded text for corruption
+------------------------------------
+Use `scan_sql_dump_text.py` to scan decoded SQL string literals for likely text
+corruption from the SQLite-to-MySQL path. This scanner is conservative: it
+flags suspicious text patterns but does not rewrite data.
+
+Scan the full dump:
+```bash
+python3 scan_sql_dump_text.py --dump-file grafana.sql
+```
+
+Focus on likely user-facing tables:
+```bash
+python3 scan_sql_dump_text.py \
+  --dump-file grafana.sql \
+  --tables dashboard,dashboard_version,alert_rule,data_source
+```
+
+Limit the scan to selected columns:
+```bash
+python3 scan_sql_dump_text.py \
+  --dump-file grafana.sql \
+  --tables dashboard \
+  --columns title,data
+```
+
+What it checks:
+- Unicode replacement characters (`�`)
+- NUL bytes
+- Hidden control characters
+- Common mojibake markers such as `FranÃ§ais`
+
+What to send back if it finds something:
+- The finding code
+- The `lines=...` range
+- The `table=...` and `column=...`
+- The emitted snippet
 
 To limit verification to selected tables:
 

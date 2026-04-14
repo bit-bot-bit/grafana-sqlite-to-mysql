@@ -164,6 +164,7 @@ def to_import_options(args: argparse.Namespace) -> ImportOptions:
         parallel_per_table=False,
         parallel_workers=4,
         parallel_temp_dir="/tmp/grafana-import",
+        ordered_table_insert=False,
         parallel_table_priority=(),
         verify_tables=(),
         dry_run=False,

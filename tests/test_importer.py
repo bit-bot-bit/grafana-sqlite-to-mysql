@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from modules.importer import (
     _coalesce_batch,
+    _dependency_ordered_table_items,
     _parallel_stage_dir,
     _parallel_stage_path,
     _ordered_table_items,
@@ -58,6 +59,7 @@ def _opts(**overrides):
         parallel_per_table=False,
         parallel_workers=1,
         parallel_temp_dir=os.path.join(root, "stage"),
+        ordered_table_insert=False,
         parallel_table_priority=(),
         verify_tables=(),
         dry_run=False,
@@ -206,6 +208,52 @@ class ParallelPriorityTests(unittest.TestCase):
         self.assertEqual(
             [name for name, _ in ordered],
             ["org", "user", "dashboard", "annotation"],
+        )
+
+    def test_dependency_ordered_items_follow_analyzer_order(self):
+        opts = _opts(
+            dump_file="/tmp/fake.sql",
+            ordered_table_insert=True,
+            parallel_table_priority=("org",),
+        )
+        table_files = {
+            "alert_rule": "/tmp/ar.sql",
+            "dashboard": "/tmp/d.sql",
+            "org": "/tmp/o.sql",
+        }
+
+        with patch(
+            "scan_sql_dump_fk_order.analyze_dump",
+            return_value={"suggested_order": ["org", "dashboard", "alert_rule"]},
+        ):
+            ordered = _dependency_ordered_table_items(table_files, opts)
+
+        self.assertEqual(
+            [name for name, _ in ordered],
+            ["org", "dashboard", "alert_rule"],
+        )
+
+    def test_dependency_ordered_items_fall_back_to_static_priority(self):
+        opts = _opts(
+            dump_file="/tmp/fake.sql",
+            ordered_table_insert=True,
+            parallel_table_priority=("org",),
+        )
+        table_files = {
+            "annotation": "/tmp/a.sql",
+            "dashboard": "/tmp/d.sql",
+            "org": "/tmp/o.sql",
+        }
+
+        with patch(
+            "scan_sql_dump_fk_order.analyze_dump",
+            side_effect=RuntimeError("boom"),
+        ):
+            ordered = _dependency_ordered_table_items(table_files, opts)
+
+        self.assertEqual(
+            [name for name, _ in ordered],
+            ["org", "annotation", "dashboard"],
         )
 
 

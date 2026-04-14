@@ -44,6 +44,7 @@ no_transforms = false
 transform_insert_or_replace = true
 parallel_per_table = false
 parallel_workers = 4
+ordered_table_insert = false
 parallel_temp_dir = /tmp/grafana-import
 dry_run = false
 dry_run_parallel = false

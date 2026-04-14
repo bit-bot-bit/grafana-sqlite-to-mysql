@@ -140,6 +140,40 @@ def _ordered_table_items(
     )
 
 
+def _dependency_ordered_table_items(
+    table_files: dict[str, str],
+    opts: ImportOptions,
+) -> list[tuple[str, str]]:
+    # This code here derives a parent-first queue order from the dump and falls back cleanly.
+    try:
+        from scan_sql_dump_fk_order import analyze_dump
+
+        result = analyze_dump(opts.dump_file, ())
+        ordered_names = [
+            name for name in result.get("suggested_order", []) if name in table_files
+        ]
+        if not ordered_names:
+            return _ordered_table_items(table_files, opts.parallel_table_priority)
+
+        priority_rank = {
+            name: index for index, name in enumerate(opts.parallel_table_priority)
+        }
+        remaining = [
+            name for name in table_files.keys() if name not in set(ordered_names)
+        ]
+        remaining.sort(
+            key=lambda name: (
+                priority_rank.get(name, len(priority_rank)),
+                name,
+            )
+        )
+        full_order = ordered_names + remaining
+        return [(name, table_files[name]) for name in full_order]
+    except Exception as err:
+        logging.warning("Falling back to static parallel table priority: %s", err)
+        return _ordered_table_items(table_files, opts.parallel_table_priority)
+
+
 def _parallel_stage_dir(base_dir: str) -> str:
     return os.path.join(base_dir, _STAGE_DIRNAME)
 
@@ -766,9 +800,12 @@ def import_dump_parallel_per_table(opts: ImportOptions) -> ImportStats:
             progress_thread = threading.Thread(target=progress_table, daemon=True)
             progress_thread.start()
 
-        for table_name, path in _ordered_table_items(
-            table_files, opts.parallel_table_priority
-        ):
+        if opts.ordered_table_insert:
+            queue_items = _dependency_ordered_table_items(table_files, opts)
+        else:
+            queue_items = _ordered_table_items(table_files, opts.parallel_table_priority)
+
+        for table_name, path in queue_items:
             if table_name in completed_names:
                 logging.info("Skipping completed table %s (resume)", table_name)
                 continue

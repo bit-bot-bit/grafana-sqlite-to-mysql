@@ -88,6 +88,7 @@ def main(argv: list[str]) -> int:
                     ("recreate_db", opts.recreate_db),
                     ("parallel_per_table", opts.parallel_per_table),
                     ("parallel_workers", opts.parallel_workers),
+                    ("ordered_table_insert", opts.ordered_table_insert),
                     (
                         "parallel_stage_dir",
                         _parallel_stage_dir(opts.parallel_temp_dir),
@@ -116,12 +117,13 @@ def main(argv: list[str]) -> int:
             "disabled" if opts.ssl_disabled else ("on" if opts.ssl_ca else "default"),
         )
         logging.info(
-            "Settings: commit_statements=%d commit_bytes=%d autocommit=%s parallel=%s workers=%d dry_run_parallel=%s",
+            "Settings: commit_statements=%d commit_bytes=%d autocommit=%s parallel=%s workers=%d ordered_table_insert=%s dry_run_parallel=%s",
             opts.commit_statements,
             opts.commit_bytes,
             opts.autocommit,
             opts.parallel_per_table,
             opts.parallel_workers,
+            opts.ordered_table_insert,
             opts.dry_run_parallel,
         )
         stats = import_dump(opts)

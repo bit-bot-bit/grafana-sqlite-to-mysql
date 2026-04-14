@@ -55,6 +55,7 @@ class ImportOptions:
     parallel_per_table: bool
     parallel_workers: int
     parallel_temp_dir: str
+    ordered_table_insert: bool
     parallel_table_priority: tuple[str, ...]
     table_filter: tuple[str, ...]
     verify_tables: tuple[str, ...]
