@@ -259,6 +259,78 @@ What to send back if it finds something:
 This scanner is aimed at bad or risky data rows in the dump itself. It is not a
 general SQL validator and does not replace a real import or post-import verification.
 
+Pre-scan dump JSON payloads
+---------------------------
+Use `scan_sql_dump_json.py` to inspect likely JSON-bearing columns inside
+`INSERT` or `REPLACE` statements. The scanner decodes SQL string literals first,
+then attempts to parse the stored payload as JSON.
+
+Scan common Grafana tables:
+```bash
+python3 scan_sql_dump_json.py \
+  --dump-file grafana.sql \
+  --tables dashboard,dashboard_version,alert_rule,data_source
+```
+
+Force-check a specific column name:
+```bash
+python3 scan_sql_dump_json.py \
+  --dump-file grafana.sql \
+  --tables dashboard \
+  --columns data
+```
+
+Emit JSON output:
+```bash
+python3 scan_sql_dump_json.py \
+  --dump-file grafana.sql \
+  --tables dashboard,alert_rule \
+  --json
+```
+
+What it checks:
+- Invalid JSON syntax after SQL string decoding
+- Insert rows where the parsed value count does not match the declared column count
+
+What to send back if it finds something:
+- The finding code
+- The `lines=...` range
+- The `table=...` and `column=...`
+- The parse error detail
+- The emitted snippet
+
+Estimate dependency order
+-------------------------
+Use `scan_sql_dump_fk_order.py` to estimate table dependency spread and a safe
+apply order for the dump. The analyzer uses explicit `FOREIGN KEY ... REFERENCES`
+clauses when they are present and falls back to inferred `*_id` / `*_uid`
+relationships from insert column lists.
+
+Scan the full dump:
+```bash
+python3 scan_sql_dump_fk_order.py --dump-file grafana.sql
+```
+
+Limit the analysis to selected tables:
+```bash
+python3 scan_sql_dump_fk_order.py \
+  --dump-file grafana.sql \
+  --tables org,folder,dashboard,alert_rule
+```
+
+Emit JSON output:
+```bash
+python3 scan_sql_dump_fk_order.py \
+  --dump-file grafana.sql \
+  --json
+```
+
+What it reports:
+- Suggested parent-first apply order
+- Dependency spread per table (`depends_on` / `referenced_by`)
+- Explicit schema edges and inferred soft-reference edges
+- Cycles when no clean topological order exists
+
 To limit verification to selected tables:
 
 ```bash
